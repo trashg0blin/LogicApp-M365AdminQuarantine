@@ -1,0 +1,1 @@
+# LogicApp-M365AdminQuarantine
