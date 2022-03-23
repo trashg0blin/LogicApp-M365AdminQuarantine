@@ -1,0 +1,772 @@
+{
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "$connections": {
+            "defaultValue": {},
+            "type": "Object"
+        }
+    },
+    "triggers": {
+        "manual": {
+            "type": "Request",
+            "kind": "Http",
+            "inputs": {
+                "schema": {
+                    "items": {
+                        "properties": {
+                            "clientId": {
+                                "type": "string"
+                            },
+                            "contentCreated": {
+                                "type": "string"
+                            },
+                            "contentExpiration": {
+                                "type": "string"
+                            },
+                            "contentId": {
+                                "type": "string"
+                            },
+                            "contentType": {
+                                "type": "string"
+                            },
+                            "contentUri": {
+                                "type": "string"
+                            },
+                            "tenantId": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "clientId",
+                            "contentCreated",
+                            "contentExpiration",
+                            "contentId",
+                            "contentType",
+                            "contentUri",
+                            "tenantId"
+                        ],
+                        "type": "object"
+                    },
+                    "type": "array"
+                }
+            }
+        }
+    },
+    "actions": {
+        "For_Each_Alert": {
+            "foreach": "@body('Parse_Alert_Array')",
+            "actions": {
+                "Compose": {
+                    "runAfter": {},
+                    "type": "Compose",
+                    "inputs": "@items('For_Each_Alert')['PolicyDetails'][0]?['PolicyId']"
+                },
+                "Condition": {
+                    "actions": {
+                        "Switch": {
+                            "runAfter": {},
+                            "cases": {
+                                "Source_is_OneDrive": {
+                                    "case": "OneDrive",
+                                    "actions": {
+                                        "Create_Graph_URL_for_OneDrive_file": {
+                                            "runAfter": {},
+                                            "type": "Compose",
+                                            "inputs": "https://graph.microsoft.com/v1.0/sites/@{items('For_Each_Alert')?['SharePointMetaData']?['SiteCollectionGuid']}/drive/root:@{replace(items('For_Each_Alert')?['SharePointMetadata']?['FilePathUrl'], concat(items('For_Each_Alert')?['SharePointMetadata']?['SiteCollectionUrl'], '/Documents'), '')}"
+                                        },
+                                        "Create_new_SharePoint_file_in_quarantine_folder": {
+                                            "runAfter": {
+                                                "Create_placeholder_file_in_OneDrive": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "body": "@body('Request_OneDrive_File_Metadata_from_Graph')",
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://justanotherdevsub.sharepoint.com/sites/IPG'))}/files",
+                                                "queries": {
+                                                    "folderPath": "/AdminQuarantine",
+                                                    "name": "@{items('For_Each_Alert')['IncidentId']}-@{items('For_Each_Alert')?['SharePointMetaData']?['FileName']}",
+                                                    "queryParametersSingleEncoded": true
+                                                }
+                                            },
+                                            "runtimeConfiguration": {
+                                                "contentTransfer": {
+                                                    "transferMode": "Chunked"
+                                                }
+                                            }
+                                        },
+                                        "Create_placeholder_file_in_OneDrive": {
+                                            "runAfter": {
+                                                "Request_OneDrive_File_Content_from_Graph": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Http",
+                                            "inputs": {
+                                                "authentication": {
+                                                    "audience": "https://graph.microsoft.com/",
+                                                    "type": "ManagedServiceIdentity"
+                                                },
+                                                "body": "@items('For_Each_Alert')",
+                                                "method": "PUT",
+                                                "uri": "@{outputs('Create_Graph_URL_for_OneDrive_file')}.txt:/content"
+                                            }
+                                        },
+                                        "Delete_OneDrive_file_from_Graph": {
+                                            "runAfter": {
+                                                "Create_new_SharePoint_file_in_quarantine_folder": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Http",
+                                            "inputs": {
+                                                "authentication": {
+                                                    "audience": "https://graph.microsoft.com/",
+                                                    "type": "ManagedServiceIdentity"
+                                                },
+                                                "method": "DELETE",
+                                                "uri": "@{outputs('Create_Graph_URL_for_OneDrive_file')}"
+                                            }
+                                        },
+                                        "Parse_JSON": {
+                                            "runAfter": {
+                                                "Request_OneDrive_File_Metadata_from_Graph": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ParseJson",
+                                            "inputs": {
+                                                "content": "@body('Request_OneDrive_File_Metadata_from_Graph')",
+                                                "schema": {
+                                                    "properties": {
+                                                        "@@microsoft.graph.downloadUrl": {
+                                                            "type": "string"
+                                                        },
+                                                        "@@odata.context": {
+                                                            "type": "string"
+                                                        },
+                                                        "cTag": {
+                                                            "type": "string"
+                                                        },
+                                                        "createdBy": {
+                                                            "properties": {
+                                                                "user": {
+                                                                    "properties": {
+                                                                        "displayName": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "email": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "id": {
+                                                                            "type": "string"
+                                                                        }
+                                                                    },
+                                                                    "type": "object"
+                                                                }
+                                                            },
+                                                            "type": "object"
+                                                        },
+                                                        "createdDateTime": {
+                                                            "type": "string"
+                                                        },
+                                                        "eTag": {
+                                                            "type": "string"
+                                                        },
+                                                        "file": {
+                                                            "properties": {
+                                                                "hashes": {
+                                                                    "properties": {
+                                                                        "quickXorHash": {
+                                                                            "type": "string"
+                                                                        }
+                                                                    },
+                                                                    "type": "object"
+                                                                },
+                                                                "mimeType": {
+                                                                    "type": "string"
+                                                                }
+                                                            },
+                                                            "type": "object"
+                                                        },
+                                                        "fileSystemInfo": {
+                                                            "properties": {
+                                                                "createdDateTime": {
+                                                                    "type": "string"
+                                                                },
+                                                                "lastModifiedDateTime": {
+                                                                    "type": "string"
+                                                                }
+                                                            },
+                                                            "type": "object"
+                                                        },
+                                                        "id": {
+                                                            "type": "string"
+                                                        },
+                                                        "lastModifiedBy": {
+                                                            "properties": {
+                                                                "user": {
+                                                                    "properties": {
+                                                                        "displayName": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "email": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "id": {
+                                                                            "type": "string"
+                                                                        }
+                                                                    },
+                                                                    "type": "object"
+                                                                }
+                                                            },
+                                                            "type": "object"
+                                                        },
+                                                        "lastModifiedDateTime": {
+                                                            "type": "string"
+                                                        },
+                                                        "name": {
+                                                            "type": "string"
+                                                        },
+                                                        "parentReference": {
+                                                            "properties": {
+                                                                "driveId": {
+                                                                    "type": "string"
+                                                                },
+                                                                "driveType": {
+                                                                    "type": "string"
+                                                                },
+                                                                "id": {
+                                                                    "type": "string"
+                                                                },
+                                                                "path": {
+                                                                    "type": "string"
+                                                                }
+                                                            },
+                                                            "type": "object"
+                                                        },
+                                                        "shared": {
+                                                            "properties": {
+                                                                "scope": {
+                                                                    "type": "string"
+                                                                }
+                                                            },
+                                                            "type": "object"
+                                                        },
+                                                        "size": {
+                                                            "type": "integer"
+                                                        },
+                                                        "webUrl": {
+                                                            "type": "string"
+                                                        }
+                                                    },
+                                                    "type": "object"
+                                                }
+                                            }
+                                        },
+                                        "Request_OneDrive_File_Content_from_Graph": {
+                                            "runAfter": {
+                                                "Parse_JSON": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Http",
+                                            "inputs": {
+                                                "authentication": {
+                                                    "audience": "https://graph.microsoft.com/",
+                                                    "type": "ManagedServiceIdentity"
+                                                },
+                                                "method": "GET",
+                                                "uri": "@body('Parse_JSON')?['@microsoft.graph.downloadUrl']"
+                                            }
+                                        },
+                                        "Request_OneDrive_File_Metadata_from_Graph": {
+                                            "runAfter": {
+                                                "Create_Graph_URL_for_OneDrive_file": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Http",
+                                            "inputs": {
+                                                "authentication": {
+                                                    "audience": "https://graph.microsoft.com/",
+                                                    "type": "ManagedServiceIdentity"
+                                                },
+                                                "method": "GET",
+                                                "uri": "@{outputs('Create_Graph_URL_for_OneDrive_file')}"
+                                            }
+                                        }
+                                    }
+                                },
+                                "Source_is_Sharepoint": {
+                                    "case": "SharePoint",
+                                    "actions": {
+                                        "Create_SharePoint_placeholder_file": {
+                                            "runAfter": {
+                                                "Get_SharePoint_file_metadata_using_path": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "body": "@items('For_Each_Alert')",
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "path": "/datasets/@{encodeURIComponent(encodeURIComponent(items('For_Each_Alert')?['SharePointMetaData']?['SiteCollectionUrl']))}/files",
+                                                "queries": {
+                                                    "folderPath": "@{replace(body('Get_SharePoint_file_metadata_using_path')?['Path'],body('Get_SharePoint_file_metadata_using_path')?['DisplayName'],'')}",
+                                                    "name": "@{concat(body('Get_SharePoint_file_metadata_using_path')?['Name'],'.txt')}",
+                                                    "queryParametersSingleEncoded": true
+                                                }
+                                            },
+                                            "runtimeConfiguration": {
+                                                "contentTransfer": {
+                                                    "transferMode": "Chunked"
+                                                }
+                                            }
+                                        },
+                                        "Get_SharePoint_file_metadata_using_path": {
+                                            "runAfter": {},
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "get",
+                                                "path": "/datasets/@{encodeURIComponent(encodeURIComponent(items('For_Each_Alert')?['SharePointMetaData']?['SiteCollectionUrl']))}/GetFileByPath",
+                                                "queries": {
+                                                    "path": "@{replace(replace(items('For_Each_Alert')?['SharePointMetadata']?['FilePathUrl'],items('For_Each_Alert')?['SharePointMetadata']?['SiteCollectionUrl'],''),'%20',' ')}",
+                                                    "queryParametersSingleEncoded": true
+                                                }
+                                            }
+                                        },
+                                        "Move_SharePoint_file_to_Admin_Quarantine": {
+                                            "runAfter": {
+                                                "Create_SharePoint_placeholder_file": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "body": {
+                                                    "destinationDataset": "https://justanotherdevsub.sharepoint.com/sites/IPG",
+                                                    "destinationFolderPath": "/AdminQuarantine",
+                                                    "nameConflictBehavior": 2,
+                                                    "sourceFileId": "@body('Get_SharePoint_file_metadata_using_path')?['Id']"
+                                                },
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "path": "/datasets/@{encodeURIComponent(encodeURIComponent(items('For_Each_Alert')?['SharePointMetaData']?['SiteCollectionUrl']))}/moveFileAsync"
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "default": {
+                                "actions": {}
+                            },
+                            "expression": "@items('For_Each_Alert')['Workload']",
+                            "type": "Switch"
+                        }
+                    },
+                    "runAfter": {
+                        "Compose": [
+                            "Succeeded"
+                        ]
+                    },
+                    "expression": {
+                        "and": [
+                            {
+                                "equals": [
+                                    "@items('For_Each_Alert')?['PolicyDetails'][0]?['PolicyId']",
+                                    "9266d519-4537-4c37-b37c-fafa1d5403ae"
+                                ]
+                            }
+                        ]
+                    },
+                    "type": "If"
+                }
+            },
+            "runAfter": {
+                "Parse_Alert_Array": [
+                    "Succeeded"
+                ]
+            },
+            "type": "Foreach"
+        },
+        "For_Each_Notification_Fetch_Alerts": {
+            "foreach": "@triggerBody()",
+            "actions": {
+                "For_Each_Alert_Append_to_Variable": {
+                    "foreach": "@body('Parse_Array_Objects')",
+                    "actions": {
+                        "Append_Alert_to_Array": {
+                            "runAfter": {},
+                            "type": "AppendToArrayVariable",
+                            "inputs": {
+                                "name": "Alerts",
+                                "value": "@items('For_Each_Alert_Append_to_Variable')"
+                            }
+                        }
+                    },
+                    "runAfter": {
+                        "Parse_Array_Objects": [
+                            "Succeeded"
+                        ]
+                    },
+                    "type": "Foreach"
+                },
+                "Get_Alerts": {
+                    "runAfter": {},
+                    "type": "Http",
+                    "inputs": {
+                        "authentication": {
+                            "audience": "https://manage.office.com/",
+                            "type": "ManagedServiceIdentity"
+                        },
+                        "method": "GET",
+                        "uri": "@items('For_Each_Notification_Fetch_Alerts')['contentUri']"
+                    }
+                },
+                "Parse_Array_Objects": {
+                    "runAfter": {
+                        "Get_Alerts": [
+                            "Succeeded"
+                        ]
+                    },
+                    "type": "ParseJson",
+                    "inputs": {
+                        "content": "@body('Get_Alerts')",
+                        "schema": {
+                            "items": {
+                                "properties": {},
+                                "required": [],
+                                "type": "object"
+                            },
+                            "type": "array"
+                        }
+                    }
+                }
+            },
+            "runAfter": {
+                "Initialize_Alert_Array": [
+                    "Succeeded"
+                ]
+            },
+            "type": "Foreach"
+        },
+        "Initialize_Alert_Array": {
+            "runAfter": {},
+            "type": "InitializeVariable",
+            "inputs": {
+                "variables": [
+                    {
+                        "name": "Alerts",
+                        "type": "array",
+                        "value": []
+                    }
+                ]
+            }
+        },
+        "Parse_Alert_Array": {
+            "runAfter": {
+                "For_Each_Notification_Fetch_Alerts": [
+                    "Succeeded"
+                ]
+            },
+            "type": "ParseJson",
+            "inputs": {
+                "content": "@variables('Alerts')",
+                "schema": {
+                    "items": {
+                        "properties": {
+                            "CreationTime": {
+                                "type": "string"
+                            },
+                            "Id": {
+                                "type": "string"
+                            },
+                            "IncidentId": {
+                                "type": "string"
+                            },
+                            "ObjectId": {
+                                "type": "string"
+                            },
+                            "Operation": {
+                                "type": "string"
+                            },
+                            "OrganizationId": {
+                                "type": "string"
+                            },
+                            "PolicyDetails": {
+                                "items": {
+                                    "properties": {
+                                        "PolicyId": {
+                                            "type": "string"
+                                        },
+                                        "PolicyName": {
+                                            "type": "string"
+                                        },
+                                        "Rules": {
+                                            "items": {
+                                                "properties": {
+                                                    "ActionParameters": {
+                                                        "items": {
+                                                            "type": "string"
+                                                        },
+                                                        "type": "array"
+                                                    },
+                                                    "Actions": {
+                                                        "items": {
+                                                            "type": "string"
+                                                        },
+                                                        "type": "array"
+                                                    },
+                                                    "ConditionsMatched": {
+                                                        "properties": {
+                                                            "ConditionMatchedInNewScheme": {
+                                                                "type": "boolean"
+                                                            },
+                                                            "SensitiveInformation": {
+                                                                "items": {
+                                                                    "properties": {
+                                                                        "ClassifierType": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "Confidence": {
+                                                                            "type": "integer"
+                                                                        },
+                                                                        "Count": {
+                                                                            "type": "integer"
+                                                                        },
+                                                                        "SensitiveInformationDetailedClassificationAttributes": {
+                                                                            "items": {
+                                                                                "properties": {
+                                                                                    "Confidence": {
+                                                                                        "type": "integer"
+                                                                                    },
+                                                                                    "Count": {
+                                                                                        "type": "integer"
+                                                                                    },
+                                                                                    "IsMatch": {
+                                                                                        "type": "boolean"
+                                                                                    }
+                                                                                },
+                                                                                "required": [
+                                                                                    "Confidence",
+                                                                                    "Count",
+                                                                                    "IsMatch"
+                                                                                ],
+                                                                                "type": "object"
+                                                                            },
+                                                                            "type": "array"
+                                                                        },
+                                                                        "SensitiveInformationDetections": {
+                                                                            "properties": {
+                                                                                "DetectedValues": {
+                                                                                    "items": {
+                                                                                        "properties": {
+                                                                                            "Name": {
+                                                                                                "type": "string"
+                                                                                            },
+                                                                                            "Value": {
+                                                                                                "type": "string"
+                                                                                            }
+                                                                                        },
+                                                                                        "required": [
+                                                                                            "Name",
+                                                                                            "Value"
+                                                                                        ],
+                                                                                        "type": "object"
+                                                                                    },
+                                                                                    "type": "array"
+                                                                                },
+                                                                                "ResultsTruncated": {
+                                                                                    "type": "boolean"
+                                                                                }
+                                                                            },
+                                                                            "type": "object"
+                                                                        },
+                                                                        "SensitiveInformationTypeName": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "SensitiveType": {
+                                                                            "type": "string"
+                                                                        }
+                                                                    },
+                                                                    "required": [
+                                                                        "ClassifierType",
+                                                                        "Confidence",
+                                                                        "Count",
+                                                                        "SensitiveInformationDetailedClassificationAttributes",
+                                                                        "SensitiveInformationDetections",
+                                                                        "SensitiveInformationTypeName",
+                                                                        "SensitiveType"
+                                                                    ],
+                                                                    "type": "object"
+                                                                },
+                                                                "type": "array"
+                                                            }
+                                                        },
+                                                        "type": "object"
+                                                    },
+                                                    "ManagementRuleId": {
+                                                        "type": "string"
+                                                    },
+                                                    "RuleId": {
+                                                        "type": "string"
+                                                    },
+                                                    "RuleMode": {
+                                                        "type": "string"
+                                                    },
+                                                    "RuleName": {
+                                                        "type": "string"
+                                                    },
+                                                    "Severity": {
+                                                        "type": "string"
+                                                    }
+                                                },
+                                                "required": [
+                                                    "ActionParameters",
+                                                    "Actions",
+                                                    "ConditionsMatched",
+                                                    "ManagementRuleId",
+                                                    "RuleId",
+                                                    "RuleMode",
+                                                    "RuleName",
+                                                    "Severity"
+                                                ],
+                                                "type": "object"
+                                            },
+                                            "type": "array"
+                                        }
+                                    },
+                                    "required": [
+                                        "PolicyId",
+                                        "PolicyName",
+                                        "Rules"
+                                    ],
+                                    "type": "object"
+                                },
+                                "type": "array"
+                            },
+                            "RecordType": {
+                                "type": "integer"
+                            },
+                            "SensitiveInfoDetectionIsIncluded": {
+                                "type": "boolean"
+                            },
+                            "SharePointMetaData": {
+                                "properties": {
+                                    "FileName": {
+                                        "type": "string"
+                                    },
+                                    "FileOwner": {
+                                        "type": "string"
+                                    },
+                                    "FilePathUrl": {
+                                        "type": "string"
+                                    },
+                                    "FileSize": {
+                                        "type": "integer"
+                                    },
+                                    "From": {
+                                        "type": "string"
+                                    },
+                                    "IsViewableByExternalUsers": {
+                                        "type": "boolean"
+                                    },
+                                    "IsVisibleOnlyToOdbOwner": {
+                                        "type": "boolean"
+                                    },
+                                    "ItemCreationTime": {
+                                        "type": "string"
+                                    },
+                                    "ItemLastModifiedTime": {
+                                        "type": "string"
+                                    },
+                                    "ItemLastSharedTime": {
+                                        "type": "string"
+                                    },
+                                    "SensitivityLabelIds": {
+                                        "type": "array"
+                                    },
+                                    "SharedBy": {
+                                        "items": {},
+                                        "type": "array"
+                                    },
+                                    "SiteAdmin": {
+                                        "type": "array"
+                                    },
+                                    "SiteCollectionGuid": {
+                                        "type": "string"
+                                    },
+                                    "SiteCollectionUrl": {
+                                        "type": "string"
+                                    },
+                                    "UniqueID": {
+                                        "type": "string"
+                                    }
+                                },
+                                "type": "object"
+                            },
+                            "UserId": {
+                                "type": "string"
+                            },
+                            "UserKey": {
+                                "type": "string"
+                            },
+                            "UserType": {
+                                "type": "integer"
+                            },
+                            "Version": {
+                                "type": "integer"
+                            },
+                            "Workload": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "CreationTime",
+                            "Id",
+                            "Operation",
+                            "OrganizationId",
+                            "RecordType",
+                            "UserKey",
+                            "UserType",
+                            "Version",
+                            "Workload",
+                            "ObjectId",
+                            "UserId",
+                            "IncidentId",
+                            "PolicyDetails",
+                            "SensitiveInfoDetectionIsIncluded",
+                            "SharePointMetaData"
+                        ],
+                        "type": "object"
+                    },
+                    "type": "array"
+                }
+            }
+        }
+    },
+    "outputs": {}
+}
